@@ -1,0 +1,51 @@
+Bootstrap: docker
+From: debian:trixie-slim
+
+# Build (no Docker, no root needed):
+#   apptainer build dorado_2.1.2.sif dorado.def
+#
+# Run:
+#   mkdir -p "$HOME/dorado-models"
+#   apptainer exec --nv --bind "$HOME/dorado-models:/models" \
+#     dorado_2.1.2.sif dorado basecaller hac pod5/ > calls.bam
+
+%labels
+    org.opencontainers.image.title dorado
+    org.opencontainers.image.authors Berkay Ekren
+    org.opencontainers.image.version 2.1.2
+
+%environment
+    export PATH=/opt/dorado/bin:$PATH
+    export DORADO_MODELS_DIRECTORY=/models
+
+%post
+    set -eu
+    DORADO_VERSION=2.1.2    # keep in sync with the version label above
+    DORADO_PLATFORM=linux-x64
+    DORADO_SHA256=""        # optional: pin the archive checksum
+
+    # Keeps apt working in unprivileged ("fakeroot") builds.
+    echo 'APT::Sandbox::User "root";' > /etc/apt/apt.conf.d/99-no-sandbox
+
+    apt-get update
+    apt-get install -y --no-install-recommends ca-certificates curl
+
+    curl -fsSL --retry 5 -o /tmp/dorado.tar.gz \
+        "https://cdn.oxfordnanoportal.com/software/analysis/dorado-${DORADO_VERSION}-${DORADO_PLATFORM}.tar.gz"
+    if [ -n "$DORADO_SHA256" ]; then
+        echo "$DORADO_SHA256  /tmp/dorado.tar.gz" > /tmp/dorado.sha256
+        sha256sum -c /tmp/dorado.sha256
+    fi
+    mkdir -p /opt/dorado /models
+    tar -xzf /tmp/dorado.tar.gz -C /opt/dorado --strip-components=1
+    rm -f /tmp/dorado.tar.gz /tmp/dorado.sha256
+
+    # A SIF is one flat filesystem (no layers), so this really removes curl.
+    apt-get purge -y --auto-remove curl
+    rm -rf /var/lib/apt/lists/*
+
+%test
+    /opt/dorado/bin/dorado --version
+
+%runscript
+    exec /opt/dorado/bin/dorado "$@"
