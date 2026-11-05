@@ -1,18 +1,11 @@
 Bootstrap: docker
 From: debian:trixie-slim
 
-# Build (no Docker, no root needed):
-#   apptainer build dorado_2.1.2.sif dorado.def
-#
-# Run:
-#   mkdir -p "$HOME/dorado-models"
-#   apptainer exec --nv --bind "$HOME/dorado-models:/models" \
-#     dorado_2.1.2.sif dorado basecaller hac pod5/ > calls.bam
-
 %labels
     org.opencontainers.image.title dorado
     org.opencontainers.image.authors Berkay Ekren
     org.opencontainers.image.version 2.1.2
+    org.opencontainers.image.revision 1.0.0
 
 %environment
     export PATH=/opt/dorado/bin:$PATH

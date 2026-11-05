@@ -1,0 +1,90 @@
+# syntax=docker/dockerfile:1
+#
+# Oxford Nanopore Dorado 2.1.2 on a slim Debian base.
+#
+# The Linux release archive is self-contained: it bundles the CUDA runtime
+# libraries and libtorch, so no nvidia/cuda base image is needed. The host only
+# needs an NVIDIA driver (>= 525.105 on x86_64) and the NVIDIA Container
+# Toolkit, which injects the driver into the container at run time.
+#
+# Build:
+#   docker build -t dorado:2.1.2 .
+#
+# Run (models are cached in ~/dorado-models between runs):
+#   mkdir -p "$HOME/dorado-models"
+#   docker run --rm --gpus all --user "$(id -u):$(id -g)" \
+#     -v "$PWD":/data -v "$HOME/dorado-models":/models \
+#     dorado:2.1.2 dorado basecaller hac pod5/ > calls.bam
+#
+# Don't add -t / -it when redirecting stdout: a TTY mixes Dorado's log output
+# into the BAM stream and corrupts it.
+
+ARG BASE_IMAGE=debian:trixie-slim
+
+# ---- Stage 1: download and unpack the release archive ----------------------
+FROM ${BASE_IMAGE} AS fetch
+
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
+
+ARG DORADO_VERSION=2.1.2
+# linux-x64               x86_64 (default)
+# linux-arm64-cuda-13.0   DGX Spark / Jetson Thor
+# linux-arm64             Jetson Orin (CUDA 12)
+ARG DORADO_PLATFORM=linux-x64
+# Optional: the archive's sha256, to pin the exact download.
+ARG DORADO_SHA256=""
+
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends ca-certificates curl \
+ && rm -rf /var/lib/apt/lists/*
+
+RUN curl -fsSL --retry 5 -o /tmp/dorado.tar.gz \
+        "https://cdn.oxfordnanoportal.com/software/analysis/dorado-${DORADO_VERSION}-${DORADO_PLATFORM}.tar.gz" \
+ && if [ -n "${DORADO_SHA256}" ]; then \
+        echo "${DORADO_SHA256}  /tmp/dorado.tar.gz" | sha256sum -c -; \
+    fi \
+ && mkdir -p /opt/dorado \
+ && tar -xzf /tmp/dorado.tar.gz -C /opt/dorado --strip-components=1 \
+ && rm /tmp/dorado.tar.gz
+
+# ---- Stage 2: runtime image ------------------------------------------------
+FROM ${BASE_IMAGE}
+
+ARG DORADO_VERSION=2.1.2
+LABEL org.opencontainers.image.title="dorado" \
+      org.opencontainers.image.version="${DORADO_VERSION}" \
+      org.opencontainers.image.source="https://github.com/nanoporetech/dorado"
+
+# CA certificates: Dorado downloads models over HTTPS.
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends ca-certificates \
+ && rm -rf /var/lib/apt/lists/*
+
+COPY --from=fetch /opt/dorado /opt/dorado
+
+# NVIDIA_*: tells the NVIDIA Container Toolkit which driver pieces to mount
+#   (nvidia/cuda images set these for you; plain Debian doesn't).
+# DORADO_MODELS_DIRECTORY: auto-downloaded models are kept here and reused
+#   instead of being fetched and deleted on every run.
+ENV PATH=/opt/dorado/bin:$PATH \
+    NVIDIA_VISIBLE_DEVICES=all \
+    NVIDIA_DRIVER_CAPABILITIES=compute,utility \
+    DORADO_MODELS_DIRECTORY=/models
+
+# Sticky + world-writable, so it also works with `docker run --user ...`.
+RUN mkdir -p /models && chmod 1777 /models
+
+# Fail the build now, not at run time, if a shared library is missing.
+# This doesn't need a GPU.
+RUN dorado --version
+
+# Optional: bake models in for offline / air-gapped use. Adds GBs to the image,
+# and don't mount a volume over /models afterwards. List names with
+# `dorado download --list`.
+# RUN dorado download --model <model_name> --models-directory /models
+
+WORKDIR /data
+
+# No ENTRYPOINT on purpose, so workflow managers (Nextflow, Snakemake, ...)
+# can run arbitrary commands in the image.
+CMD ["dorado", "--help"]

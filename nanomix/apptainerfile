@@ -1,0 +1,36 @@
+Bootstrap: docker
+From: mambaorg/micromamba:1.5.10
+
+# Build (in the folder containing nanomix.def and nanomix.lock):
+#   apptainer build --fakeroot nanomix.sif nanomix.def
+# nanomix.lock comes from the working env:
+#   conda list -n nanomix --explicit > nanomix.lock
+
+%files
+    nanomix.lock /opt/nanomix.lock
+
+%post
+    # Recreate the exact package set of the tested conda environment
+    micromamba create -y -p /opt/nanomix --file /opt/nanomix.lock
+    # If `conda list -n nanomix` shows nanomix (or anything else) from the "pypi" channel,
+    # the lock file does not contain it; install it here with the same version, e.g.:
+    # /opt/nanomix/bin/pip install --no-deps nanomix==0.2.0
+    micromamba clean --all --yes
+
+%environment
+    export PATH=/opt/nanomix/bin:$PATH
+    # One numerical-library thread per worker: prevents oversubscription, results unchanged.
+    # NUMBA_NUM_THREADS is the one nanomix's compiled code actually uses (default = all CPUs).
+    # Raise it per run, e.g. APPTAINERENV_NUMBA_NUM_THREADS=16 apptainer exec ...
+    export NUMBA_NUM_THREADS=1 OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1
+    # Ignore Python packages in ~/.local on the host (home is mounted by default)
+    export PYTHONNOUSERSITE=1
+
+%runscript
+    exec nanomix "$@"
+
+%test
+    /opt/nanomix/bin/nanomix deconvolute --help > /dev/null && echo "nanomix OK"
+
+%labels
+    Description nanomix methylation deconvolution, environment pinned from a tested conda env

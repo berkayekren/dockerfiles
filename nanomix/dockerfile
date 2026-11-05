@@ -1,0 +1,16 @@
+FROM debian:trixie-slim
+
+RUN set -eu \
+    && echo 'APT::Sandbox::User "root";' > /etc/apt/apt.conf.d/99-no-sandbox \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates pip \
+    && pip install nanomix \
+    && apt-get purge -y --auto-remove pip \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN /opt/nanomix/bin/nanomix --version
+
+LABEL org.opencontainers.image.title="nanomix" \
+    org.opencontainers.image.authors="Berkay Ekren" \
+    org.opencontainers.image.version="0.0.1" \
+    org.opencontainers.image.revision="1.0.0"
